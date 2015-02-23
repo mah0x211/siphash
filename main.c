@@ -33,10 +33,10 @@ int main (int argc, const char * argv[])
         0xdeadbeefcafebabe, 
         0x8badf00d1badb002
     };
-    char *msg = "Hello, World!\n";
+    char *msg = "Hello, World!";
     uint64_t res = siphash( 2, 4, key, msg, strlen( msg ) );
     
-    printf( "%llu", res );
+    printf( "%s -> %llu\n", msg, res );
     
     return 0;
 }
