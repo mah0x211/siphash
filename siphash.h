@@ -23,14 +23,100 @@
  *  IN THE SOFTWARE.
  */
 
-#ifndef ___SIPHASH___
-#define ___SIPHASH___
+#ifndef ___SIPHASH_H___
+#define ___SIPHASH_H___
 
 #include <unistd.h>
 #include <stdint.h>
+#include <limits.h>
 
-uint64_t siphash( const uint8_t round_blk, const uint8_t round_fin, 
-                  const uint64_t key[2], const void *src, size_t len );
+
+#define SIPHASH_BIT_ROTL(b,n)  ((b<<n)|(b>>((sizeof(b)*CHAR_BIT)-n)))
+
+#define SIPHASH_ROUND(s0,s1,s2,s3) ({\
+    s0 += s1; \
+    s2 += s3; \
+    s1 = SIPHASH_BIT_ROTL(s1,13); \
+    s3 = SIPHASH_BIT_ROTL(s3,16); \
+    s1 ^= s0; \
+    s3 ^= s2; \
+    s0 = SIPHASH_BIT_ROTL(s0,32); \
+    s2 += s1; \
+    s0 += s3; \
+    s1 = SIPHASH_BIT_ROTL(s1,17); \
+    s3 = SIPHASH_BIT_ROTL(s3,21); \
+    s1 ^= s2; \
+    s3 ^= s0; \
+    s2 = SIPHASH_BIT_ROTL(s2,32); \
+})
+
+static inline uint64_t siphash( const uint8_t rblk, const uint8_t rfin, 
+                                const uint64_t key[2], const void *src, 
+                                size_t len )
+{
+    uint8_t *ptr = (uint8_t*)src;
+    size_t byte64t = sizeof( uint64_t );
+    // multiply by 8
+    size_t w = ( len / 8 ) << 3;
+    
+    // initialize
+    // v0 = k0 ⊕ 736f6d6570736575
+    uint64_t v0 = key[0] ^ 0x736f6d6570736575ULL;
+    // v1 = k1 ⊕ 646f72616e646f6d
+    uint64_t v1 = key[1] ^ 0x646f72616e646f6dULL;
+    // v2 = k0 ⊕ 6c7967656e657261
+    uint64_t v2 = key[0] ^ 0x6c7967656e657261ULL;
+    // v3 = k1 ⊕ 7465646279746573
+    uint64_t v3 = key[1] ^ 0x7465646279746573ULL;
+    uint64_t mi = 0;
+    size_t i = 0;
+    uint8_t k = 0;
+    
+    // compression
+    for( i = 0; i < w; i += byte64t ){
+        mi = *(uint64_t*)(ptr+i);
+        // v3 ⊕ = mi
+        v3 ^= mi;
+        // SipHash-c-d: c is the number of rounds per message block
+        for( k = 0; k < rblk; k++ ){
+            SIPHASH_ROUND( v0, v1, v2, v3 );
+        }
+        // v0 ⊕ = mi
+        v0 ^= mi;
+    }
+
+    // ending with a byte encoding the positive integer b mod 256.
+    mi = (uint64_t)len << 56;
+    ptr += i;
+    switch( len - i ){
+        case 7: mi |= (uint64_t)ptr[6] << 48;
+        case 6: mi |= (uint64_t)ptr[5] << 40;
+        case 5: mi |= (uint64_t)ptr[4] << 32;
+        case 4: mi |= (uint64_t)ptr[3] << 24;
+        case 3: mi |= (uint64_t)ptr[2] << 16;
+        case 2: mi |= (uint64_t)ptr[1] << 8;
+        case 1: mi |= (uint64_t)*ptr;
+    }
+    v3 ^= mi;
+    // SipHash-c-d: c is the number of rounds per message block
+    for( k = 0; k < rblk; k++ ){
+        SIPHASH_ROUND( v0, v1, v2, v3 );
+    }
+    v0 ^= mi;
+    
+    // finalization
+    // v2 ⊕ = ff
+    v2 ^= 0xff;
+    // SipHash-c-d: d is the number of finalization rounds
+    for( k = 0; k < rfin; k++ ){
+        SIPHASH_ROUND( v0, v1, v2, v3 );
+    }
+    
+    return v0 ^ v1 ^ v2 ^ v3;
+}
+
+#undef SIPHASH_BIT_ROTL
+#undef SIPHASH_ROUND
 
 #define siphash24(key,src,len)  siphash(2,4,key,src,len)
 #define siphash48(key,src,len)  siphash(4,8,key,src,len)
